@@ -6,10 +6,7 @@ import (
 	"log"
 	"os"
 	"regexp"
-	"strings"
 	"text/template"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 func check(e error) {
@@ -18,33 +15,15 @@ func check(e error) {
 	}
 }
 
-var (
-	t   *template.Template
-	err error
-)
-
-func unfilter(s string) string {
-	return strings.Replace(s, "\n", `
-	`, -1)
-}
-
 func main() {
-	prerenderCount := 0
-
-	renderBuffer := &bytes.Buffer{}
-
+	var t *template.Template
+	regexCache := make(map[string]*regexp.Regexp)
 	templateFuncs := map[string]interface{}{
 		"newl": func() string {
 			return string('\n')
 		},
 		"tab": func() string {
 			return string('\t')
-		},
-		"dump": spew.Sdump,
-		"isMap": func(arg interface{}) bool {
-			// TODO: if we'd want to check "is iterable" via reflection
-			_, ok := arg.(map[string]interface{})
-			return ok
 		},
 		"map": func(args ...interface{}) map[string]interface{} {
 			length := len(args)
@@ -61,8 +40,6 @@ func main() {
 			return m
 		},
 		"render": func(templateName string, args ...map[string]interface{}) string {
-			prerenderCount++
-
 			var m map[string]interface{}
 			switch len(args) {
 			case 0:
@@ -72,15 +49,19 @@ func main() {
 				log.Fatal("Error: multiple arguments not supported, use map")
 			}
 
-			err = t.ExecuteTemplate(renderBuffer, templateName, m)
+			b := &bytes.Buffer{}
+			err := t.ExecuteTemplate(b, templateName, m)
 			check(err)
-
-			result := renderBuffer.String()
-			renderBuffer.Reset()
-			return result
+			return b.String()
 		},
 		"regex": func(data, pattern string) []map[string]string {
-			re := regexp.MustCompile(pattern)
+			var re *regexp.Regexp
+			var ok bool
+			if re, ok = regexCache[pattern]; !ok {
+				re = regexp.MustCompile(pattern)
+				regexCache[pattern] = re
+			}
+
 			matches := re.FindAllStringSubmatch(data, -1)
 			result := namedSubmatchMaps(matches, re.SubexpNames())
 			return result
@@ -92,35 +73,12 @@ func main() {
 		},
 	}
 
-	t, err = template.New("").Funcs(templateFuncs).ParseFiles("./typescript.tpl")
+	var err error
+	t, err = template.New("").Funcs(templateFuncs).ParseFiles("./main.tmpl")
 	check(err)
 
 	err = t.ExecuteTemplate(os.Stdout, "Main", nil)
 	check(err)
-
-	// spew.Dump(regex.String())
-
-	// //Find all exported functions.
-	// regex.Reset()
-	// err = t.ExecuteTemplate(regex, "ExportFunc", nil)
-	// check(err)
-	// re := regexp.MustCompile(regex.String())
-	// println("Regex: ", regex.String())
-	// matches := re.FindAllStringSubmatch(string(script), -1)
-	// result := namedSubmatchMap(matches, re.SubexpNames())
-	// spew.Dump(result)
-
-	// //Find all exported classes.
-	// regex.Reset()
-	// err = t.ExecuteTemplate(regex, "ExportClass", nil)
-	// check(err)
-	// re = regexp.MustCompile(regex.String())
-	// println("Regex: ", regex.String())
-	// matches = re.FindAllStringSubmatch(string(script), -1)
-	// result = namedSubmatchMap(matches, re.SubexpNames())
-	// spew.Dump(result)
-
-	spew.Dump("CALLED:", prerenderCount)
 }
 
 func namedSubmatchMaps(matches [][]string, subexpNames []string) []map[string]string {
